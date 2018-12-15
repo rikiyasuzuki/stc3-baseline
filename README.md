@@ -1,6 +1,6 @@
 
 
-This repo is a LSTM+BoW baseline model for [Nugget Detection (ND) and Dialogue Quality (DQ) subtasks of NTCIR 14 - Short Text Conversation (STC3).](https://sakai-lab.github.io/stc3-dataset/)
+This repo is an Attention-Based Representation(ABR)  model for [Nugget Detection (ND) and Dialogue Quality (DQ) subtasks of NTCIR 14 - Short Text Conversation (STC3).](https://sakai-lab.github.io/stc3-dataset/)
 
 
 

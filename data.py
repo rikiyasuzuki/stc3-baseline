@@ -8,6 +8,7 @@ import numpy as np
 import tensorflow as tf
 from pathlib2 import Path
 from tensorflow.python.keras.preprocessing.sequence import pad_sequences
+from nltk.corpus import wordnet
 
 from vocab import SpecialTokens
 from vocab import Vocab
@@ -149,11 +150,78 @@ def process_raw_data(raw_data,
                        turn_lengths,
                        dialogue_length)
 
+# -----add-----
+
+    def data_augment():
+        for dialogue in raw_data:
+            tokenized_turns = []
+            senders = []
+            for turn in dialogue["turns"]:
+                sender = 1 if turn["sender"].startswith("c") else 0
+                senders.append(sender)
+                text = " ".join(turn["utterances"])
+                tokenized_text = [vocab.sos_idx]
+
+                for token in vocab.tokenizer(text)[:max_len]:
+                    tokenized_text.append(vocab.word_to_index(token))
+                
+                rand = np.random.rand()
+                if len(tokenized_text) > 1:
+                    aug_idx = 1 + np.random.randint(low=0, high=len(tokenized_text) - 1, size=1)
+                    aug_idx = aug_idx[0]
+                else:
+                    rand = 1
+
+                if rand < 0.8:
+                    syns = wordnet.synsets(vocab.index_to_word(tokenized_text[aug_idx]))
+                    if len(syns) > 0:
+                        try:
+                            tokenized_text[aug_idx] = vocab.word_to_index(syns[0].lemmas()[0].name())
+                        except IndexError:
+                            tokenized_text[aug_idx] = vocab.unk_idx
+                    else:
+                        tokenized_text[aug_idx] = vocab.unk_idx
+                elif rand < 0.9:
+                    tokenized_text[aug_idx] = vocab.unk_idx
+
+                tokenized_text.append(vocab.eos_idx)
+                tokenized_turns.append(tokenized_text)
+
+            turn_lengths = [len(u) for u in tokenized_turns]
+            dialogue_length = len(tokenized_turns)
+            padded_turns = pad_sequences(tokenized_turns, padding="post",
+                                         truncating="post", value=vocab.pad_idx)
+
+            if is_train:
+                customer_nugget_label, helpdesk_nugget_label, quality_label = \
+                    parse_labels(dialogue["annotations"], senders)
+                yield (dialogue["id"],
+                       padded_turns,
+                       senders,
+                       turn_lengths,
+                       dialogue_length,
+                       customer_nugget_label,
+                       helpdesk_nugget_label,
+                       quality_label)
+
+            else:
+                yield (dialogue["id"],
+                       padded_turns,
+                       senders,
+                       turn_lengths,
+                       dialogue_length)
+
+# -----end-----
+
     if cache_dir:
         pkl_data = cache_dir / data_pkl_name()
 
         if not pkl_data.is_file():
             data = [x for x in data_gen()]
+            if is_train:
+                for _ in range(8):
+                    augment = [x for x in data_augment()]
+                    data += augment
 
             if not is_train:
                 data.sort(key=lambda x: x[4], reverse=True)

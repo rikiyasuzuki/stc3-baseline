@@ -6,6 +6,8 @@ from tensorflow.python.ops import rnn_cell
 
 import data
 from data import Task
+from attention import attention
+from self_attention import self_attention
 
 
 class Model(object):
@@ -160,8 +162,9 @@ def _sender_aware_encoding(inputs, senders):
         return output
 
 
-def _rnn(inputs, seq_lengths, dropout, params):
-    with tf.name_scope("rnn"):
+def _rnn(inputs, seq_lengths, dropout, params, name):
+    name = "rnn" + str(name)
+    with tf.variable_scope(name):
         cell_fn = lambda: rnn_cell.DropoutWrapper(
             params.cell(params.hidden_size),
             output_keep_prob=1 - dropout,
@@ -183,21 +186,64 @@ def _encoder(inputs, senders, dialog_lengths, dropout, params):
     return _rnn(inputs, dialog_lengths, dropout, params)
 
 
+def feed_forward(x, size, embedding, name=1):
+    name = "attention_feed_forward_" + str(name)
+    with tf.variable_scope(name):
+        d_ff = 1024
+        w1 = tf.Variable(tf.random_normal([size, d_ff], stddev=0.01), name="w1")
+        b1 = tf.Variable(tf.random_normal([d_ff], stddev=0.01), name="b1")
+        w2 = tf.Variable(tf.random_normal([d_ff, embedding], stddev=0.01), name="w2")
+        b2 = tf.Variable(tf.random_normal([embedding], stddev=0.01), name="b2")
+        y = tf.nn.relu(tf.tensordot(x, w1, axes=1, name="relu") + b1)
+        return tf.tensordot(y, w2, axes=1, name="feed") + b2
+
+
 def quality_model_fn(features, dropout, params):
     turns, senders, utterance_lengths, dialog_lengths = features
-    output = _encoder(turns, senders, dialog_lengths, dropout, params)
-    dialog_repr = tf.reduce_sum(output, axis=1)
-    logits = []
-    for _ in data.QUALITY_MEASURES:
-        logits.append(tf.layers.dense(dialog_repr, len(data.QUALITY_SCALES)))
-    logits = tf.stack(logits, axis=1)
+    self_output = _rnn(turns, dialog_lengths, dropout, params, name="quality_0")
+
+    with tf.variable_scope("transformer_quality"):
+        outputs = []
+        for i in range(params.attention_layers):
+            output = _rnn(turns, dialog_lengths, dropout, params, name="quality_"+str(i+1))
+            outputs.append(self_attention(output, dialog_lengths, dropout, params, layers=i+1))
+        outputs = tf.concat(outputs, axis=-1)
+        d_model = params.attention_size * params.attention_layers
+        w1 = tf.Variable(tf.random_normal([d_model, d_model], stddev=0.01), name="quality_w1")
+        self_repr = tf.tensordot(outputs, w1, axes=1, name="quality_self_repr")
+        self_repr = self_repr + self_output
+
+        dialog_repr = feed_forward(self_repr, d_model, d_model, name="quality")
+        dialog_repr = dialog_repr + self_repr
+
+        dialog_repr = attention(dialog_repr, dropout, params, task=0)
+        w2 = tf.Variable(tf.random_normal([d_model, len(data.QUALITY_SCALES)], stddev=0.01), name="quality_w2")
+        logits = tf.tensordot(dialog_repr, w2, axes=1, name="quality_logits")
+
     return logits
 
 
 def nugget_model_fn(features, dropout, params):
     turns, senders, utterance_lengths, dialog_lengths = features
-    output = _encoder(turns, senders, dialog_lengths, dropout, params)
 
+    turns = _sender_aware_encoding(turns, senders)
+    self_output = _rnn(turns, dialog_lengths, dropout, params, name="nugget_0")
+
+    with tf.variable_scope("transformer_nugget"):
+        outputs = []
+        for i in range(params.attention_layers):
+            output = _rnn(turns, dialog_lengths, dropout, params, name="nugget_" + str(i+1))
+            outputs.append(self_attention(output, dialog_lengths, dropout, params, layers=i+1))
+        outputs = tf.concat(outputs, axis=-1)
+        d_model = params.attention_size * params.attention_layers
+        w1 = tf.Variable(tf.random_normal([d_model, d_model], stddev=0.01), name="nugget_w1")
+        self_repr = tf.tensordot(outputs, w1, axes=1, name="nugget_self_repr")
+        self_repr = self_repr + self_output
+
+        dialog_repr = feed_forward(self_repr, d_model, d_model, name="nugget")
+        dialog_repr = dialog_repr + self_repr
+
+        output = dialog_repr
 
     # assume ordering is  [customer, helpdesk, customer, .....]
     max_time = tf.shape(output)[1]
@@ -238,6 +284,8 @@ def nugget_loss(customer_logits, helpdesk_logits, customer_labels, helpdesk_labe
 
 def quality_loss(logits, labels):
     return tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=logits, labels=labels))
+    # p = labels - tf.nn.softmax(logits, axis=-1)
+    # return tf.reduce_mean(tf.reduce_sum((tf.abs(tf.cumsum(p, axis=-1)) + tf.abs(tf.cumsum(p, axis=-1, reverse=True)) / 8), axis=-1))
 
 
 def build_train_op(loss, global_step, optimizer=None, lr=None, moving_decay=0.9999):

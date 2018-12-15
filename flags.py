@@ -32,10 +32,10 @@ def __define_base(parser):
     parser.add_argument("--tag", type=str, default="baseline")
 
 def __define_training(parser):
-    parser.add_argument("--num-epoch", type=int, default=15)
+    parser.add_argument("--num-epoch", type=int, default=30)
     parser.add_argument("--patience", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=128)
-    parser.add_argument("--dropout", type=float, default=.3)
+    parser.add_argument("--dropout", type=float, default=.1)
     parser.add_argument("--update-embedding", type=bool, default=False)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--dev-ratio", type=float, default=.2)
@@ -48,10 +48,11 @@ def __define_training(parser):
 def __define_model(parser):
     parser.add_argument("--english-vocab", type=str, default="Glove840B")
     parser.add_argument("--chinese-vocab", type=str, default="Baidu")
-    parser.add_argument("--hidden-size", type=int, default=150)
+    parser.add_argument("--hidden-size", type=int, default=128)
     parser.add_argument("--num-layers", type=int, default=3)
     parser.add_argument("--cell", type=str, default="LSTMCell")
-
+    parser.add_argument("--attention-layers", type=int, default=8)
+    parser.add_argument("--attention-size", type=int, default=32)
 
 def __define_preprocessing(parser):
     parser.add_argument("--max-len", type=int, default=100)
